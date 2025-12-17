@@ -76,6 +76,11 @@ class GroundTarget:
         self.last_shot_time = 0
         self.range = 400 if self.can_shoot else 0
         
+        # Turret rotation for AA guns and tanks
+        self.turret_angle = 0.0  # Current turret facing direction
+        self.target_turret_angle = 0.0  # Desired turret direction
+        self.turret_turn_rate = 2.0  # Radians per second
+        
     def take_damage(self, damage):
         self.health -= damage
         if self.health <= 0:
@@ -83,13 +88,18 @@ class GroundTarget:
             self.health = 0
             
     def update(self, dt, aircraft_list, projectiles_list):
-        if not self.alive or not self.can_shoot:
+        if not self.alive:
+            return
+            
+        # Update turret rotation
+        self.update_turret_rotation(dt)
+        self.update_tank_rotation(aircraft_list)
+            
+        if not self.can_shoot:
             return
             
         self.last_shot_time += dt
-        if self.last_shot_time < 2.0:  # Fire every 2 seconds
-            return
-            
+        
         # Find nearest enemy aircraft
         nearest_target = None
         min_distance = float('inf')
@@ -102,30 +112,100 @@ class GroundTarget:
                     nearest_target = aircraft
                     
         if nearest_target:
-            # Create anti-air projectile
-            self.last_shot_time = 0
+            # Calculate desired turret angle to target
             to_target = nearest_target.pos - self.pos
-            distance = np.linalg.norm(to_target)
-            direction = to_target / distance
+            self.target_turret_angle = math.atan2(to_target[1], to_target[0])
             
-            aa_weapon = WeaponConfig(
-                weapon_type=WeaponType.CANNON,
-                damage=40,
-                range=self.range,
-                fire_rate=0.5,
-                velocity=600,
-                ammo_count=999,
-                blast_radius=10
-            )
+            # Only fire if turret is roughly pointing at target and enough time has passed
+            angle_diff = abs(self.turret_angle - self.target_turret_angle)
+            # Handle angle wrap-around
+            if angle_diff > math.pi:
+                angle_diff = 2 * math.pi - angle_diff
+                
+            # Fire if turret is aimed within 15 degrees and cooldown is ready
+            if angle_diff < math.pi/12 and self.last_shot_time >= 2.0:
+                self.fire_at_target(nearest_target, projectiles_list)
+                self.last_shot_time = 0
+        else:
+            # No target - slowly return turret to neutral position (pointing north)
+            self.target_turret_angle = math.pi/2  # Point upward
             
-            projectile = Projectile(
-                self.pos[0], self.pos[1], self.pos[2],
-                direction[0] * aa_weapon.velocity,
-                direction[1] * aa_weapon.velocity,
-                direction[2] * aa_weapon.velocity,
-                aa_weapon, None, self.team
-            )
-            projectiles_list.append(projectile)
+    def update_turret_rotation(self, dt):
+        """Smoothly rotate turret toward target angle"""
+        if abs(self.turret_angle - self.target_turret_angle) < 0.01:
+            self.turret_angle = self.target_turret_angle
+            return
+            
+        # Calculate shortest rotation direction
+        angle_diff = self.target_turret_angle - self.turret_angle
+        
+        # Normalize angle difference to [-pi, pi]
+        while angle_diff > math.pi:
+            angle_diff -= 2 * math.pi
+        while angle_diff < -math.pi:
+            angle_diff += 2 * math.pi
+            
+        # Apply rotation with rate limit
+        max_rotation = self.turret_turn_rate * dt
+        if abs(angle_diff) <= max_rotation:
+            self.turret_angle = self.target_turret_angle
+        else:
+            self.turret_angle += max_rotation if angle_diff > 0 else -max_rotation
+            
+        # Normalize turret angle to [0, 2*pi]
+        self.turret_angle = self.turret_angle % (2 * math.pi)
+    
+    def update_tank_rotation(self, aircraft_list):
+        # Add this to the GroundTarget.update method, right after the turret rotation update:
+
+        # Tanks also rotate turrets toward nearest enemies (but don't shoot)
+        if self.target_type == "tank":
+            nearest_enemy = None
+            min_distance = float('inf')
+            
+            for aircraft in aircraft_list:
+                if aircraft.team != self.team and aircraft.alive:
+                    distance = np.linalg.norm(aircraft.pos - self.pos)
+                    if distance < 300 and distance < min_distance:  # Tanks track at shorter range
+                        min_distance = distance
+                        nearest_enemy = aircraft
+                        
+            if nearest_enemy:
+                # Point turret at enemy
+                to_enemy = nearest_enemy.pos - self.pos
+                self.target_turret_angle = math.atan2(to_enemy[1], to_enemy[0])
+            else:
+                # Return to neutral position
+                self.target_turret_angle = math.pi/2
+
+    def fire_at_target(self, target, projectiles_list):
+        """Fire at the specified target"""
+        to_target = target.pos - self.pos
+        distance = np.linalg.norm(to_target)
+        direction = to_target / distance
+        
+        aa_weapon = WeaponConfig(
+            weapon_type=WeaponType.CANNON,
+            damage=40,
+            range=self.range,
+            fire_rate=0.5,
+            velocity=600,
+            ammo_count=999,
+            blast_radius=10
+        )
+        
+        # Fire from turret position
+        turret_offset = np.array([math.cos(self.turret_angle), math.sin(self.turret_angle), 0]) * 10
+        fire_pos = self.pos + turret_offset
+        
+        projectile = Projectile(
+            fire_pos[0], fire_pos[1], fire_pos[2],
+            direction[0] * aa_weapon.velocity,
+            direction[1] * aa_weapon.velocity,
+            direction[2] * aa_weapon.velocity,
+            aa_weapon, None, self.team
+        )
+        projectiles_list.append(projectile)
 
 class Projectile:
     def __init__(self, x, y, z, vx, vy, vz, weapon_config, target=None, team=None):
@@ -873,7 +953,7 @@ class DogfightSimulation:
                                               parameters={'distance': 80, 'offset_angle': math.pi + 0.5}))
 
     def draw_ground_target(self, target):
-        """Draw a ground target"""
+        """Draw a ground target with rotating turret if applicable"""
         if not target.alive:
             return
             
@@ -888,8 +968,18 @@ class DogfightSimulation:
             elif target.team == "red":
                 color = (200, 100, 100)
                 
+            # Tank body
             pygame.draw.rect(self.screen, color, (x - 8, y - 5, 16, 10))
-            pygame.draw.circle(self.screen, color, (x, y), 4)
+            
+            # Rotating turret
+            turret_color = tuple(min(255, c + 20) for c in color)  # Slightly brighter
+            pygame.draw.circle(self.screen, turret_color, (x, y), 6)
+            
+            # Turret barrel
+            barrel_length = 12
+            barrel_end_x = x + math.cos(target.turret_angle) * barrel_length
+            barrel_end_y = y + math.sin(target.turret_angle) * barrel_length
+            pygame.draw.line(self.screen, turret_color, (x, y), (barrel_end_x, barrel_end_y), 3)
             
         elif target.target_type == "building":
             # Draw building as larger rectangle
@@ -902,15 +992,34 @@ class DogfightSimulation:
             pygame.draw.rect(self.screen, color, (x - 12, y - 12, 24, 24))
             
         elif target.target_type == "aa_gun":
-            # Draw AA gun as circle with lines
+            # Draw AA gun as circle with rotating barrel
             color = (60, 60, 60)
             if target.team == "blue":
                 color = (60, 60, 120)
             elif target.team == "red":
                 color = (120, 60, 60)
-                
-            pygame.draw.circle(self.screen, color, (x, y), 8)
-            pygame.draw.line(self.screen, color, (x, y), (x, y - 15), 3)
+            
+            # Base platform
+            pygame.draw.circle(self.screen, color, (x, y), 10)
+            
+            # Rotating gun mount
+            mount_color = tuple(min(255, c + 30) for c in color)
+            pygame.draw.circle(self.screen, mount_color, (x, y), 6)
+            
+            # Gun barrel (longer than tank barrel)
+            barrel_length = 18
+            barrel_end_x = x + math.cos(target.turret_angle) * barrel_length
+            barrel_end_y = y + math.sin(target.turret_angle) * barrel_length
+            pygame.draw.line(self.screen, mount_color, (x, y), (barrel_end_x, barrel_end_y), 4)
+            
+            # Muzzle flash effect when recently fired
+            if target.last_shot_time < 0.2:  # Show muzzle flash for 0.2 seconds after firing
+                flash_length = 8
+                flash_end_x = barrel_end_x + math.cos(target.turret_angle) * flash_length
+                flash_end_y = barrel_end_y + math.sin(target.turret_angle) * flash_length
+                # Bright yellow/orange muzzle flash
+                pygame.draw.line(self.screen, (255, 255, 100), (barrel_end_x, barrel_end_y), (flash_end_x, flash_end_y), 6)
+                pygame.draw.circle(self.screen, (255, 200, 0), (int(barrel_end_x), int(barrel_end_y)), 4)
             
         # Health bar for ground targets
         if target.health < target.max_health:
@@ -923,6 +1032,24 @@ class DogfightSimulation:
                             (x - bar_width//2, y - target.size - 8, bar_width, bar_height))
             pygame.draw.rect(self.screen, (0, 255, 0), 
                             (x - bar_width//2, y - target.size - 8, health_width, bar_height))
+            
+        # Show targeting indicator for AA guns when they're tracking
+        if (target.target_type == "aa_gun" and target.can_shoot and 
+            abs(target.turret_angle - target.target_turret_angle) > 0.1):
+            # Draw a small arc showing the turret is turning
+            arc_radius = 15
+            start_angle = target.turret_angle
+            end_angle = target.target_turret_angle
+            
+            # Draw small dots to show rotation direction
+            for i in range(3):
+                angle_step = (end_angle - start_angle) * (i + 1) / 4
+                if abs(angle_step) > math.pi:
+                    angle_step = angle_step - 2*math.pi if angle_step > 0 else angle_step + 2*math.pi
+                dot_angle = start_angle + angle_step
+                dot_x = x + math.cos(dot_angle) * arc_radius
+                dot_y = y + math.sin(dot_angle) * arc_radius
+                pygame.draw.circle(self.screen, (255, 255, 0), (int(dot_x), int(dot_y)), 1)
 
     def project_3d_to_2d(self, pos_3d):
         """Project 3D position to 2D screen coordinates"""
