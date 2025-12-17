@@ -285,7 +285,7 @@ class DogfightSimulation:
             damage=15,
             range=300,
             fire_rate=10,
-            velocity=800,
+            velocity=600,  # Reduced from 800
             ammo_count=500
         )
         
@@ -294,7 +294,7 @@ class DogfightSimulation:
             damage=100,
             range=600,
             fire_rate=0.5,
-            velocity=900,
+            velocity=700,  # Reduced from 900
             ammo_count=4,
             tracking=True,
             blast_radius=20
@@ -305,27 +305,27 @@ class DogfightSimulation:
             damage=50,
             range=250,
             fire_rate=3,
-            velocity=1000,
+            velocity=750,  # Reduced from 1000
             ammo_count=100
         )
         
-        # Fighter aircraft config
+        # Fighter aircraft config - REDUCED SPEEDS
         fighter_config = AircraftConfig(
-            max_speed=300,
-            acceleration=2.0,
-            turn_rate=2.0,
-            climb_rate=50,
+            max_speed=120,      # Reduced from 300
+            acceleration=1.0,   # Reduced from 2.0
+            turn_rate=1.5,      # Reduced from 2.0
+            climb_rate=30,      # Reduced from 50
             max_altitude=500,
             health=100,
             weapons=[machine_gun, missile]
         )
         
-        # Attack aircraft config
+        # Attack aircraft config - REDUCED SPEEDS
         attack_config = AircraftConfig(
-            max_speed=250,
-            acceleration=1.5,
-            turn_rate=1.5,
-            climb_rate=30,
+            max_speed=100,      # Reduced from 250
+            acceleration=0.8,   # Reduced from 1.5
+            turn_rate=1.2,      # Reduced from 1.5
+            climb_rate=20,      # Reduced from 30
             max_altitude=400,
             health=150,
             weapons=[cannon, machine_gun]
@@ -644,7 +644,7 @@ def create_custom_scenario():
         damage=80,
         range=400,
         fire_rate=2,
-        velocity=1200,
+        velocity=800,  # Reduced from 1200
         ammo_count=50
     )
     
@@ -653,32 +653,32 @@ def create_custom_scenario():
         damage=150,
         range=800,
         fire_rate=0.3,
-        velocity=1000,
+        velocity=700,  # Reduced from 1000
         ammo_count=8,
         tracking=True,
         blast_radius=30
     )
     
-    # Create heavy fighter config
+    # Create heavy fighter config - REDUCED SPEEDS
     heavy_fighter = AircraftConfig(
-        max_speed=280,
-        acceleration=1.8,
-        turn_rate=1.8,
-        climb_rate=40,
+        max_speed=110,      # Reduced from 280
+        acceleration=0.9,   # Reduced from 1.8
+        turn_rate=1.3,      # Reduced from 1.8
+        climb_rate=25,      # Reduced from 40
         max_altitude=600,
         health=200,
         weapons=[heavy_cannon, homing_missile]
     )
     
-    # Create interceptor config
+    # Create interceptor config - REDUCED SPEEDS
     interceptor = AircraftConfig(
-        max_speed=350,
-        acceleration=2.5,
-        turn_rate=2.5,
-        climb_rate=60,
+        max_speed=140,      # Reduced from 350
+        acceleration=1.2,   # Reduced from 2.5
+        turn_rate=1.8,      # Reduced from 2.5
+        climb_rate=35,      # Reduced from 60
         max_altitude=550,
         health=80,
-        weapons=[WeaponConfig(WeaponType.MACHINE_GUN, 20, 350, 15, 900, 800)]
+        weapons=[WeaponConfig(WeaponType.MACHINE_GUN, 20, 350, 15, 650, 800)]  # Reduced velocity from 900
     )
     
     # Add aircraft in formation
