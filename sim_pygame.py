@@ -82,10 +82,12 @@ class GroundTarget:
         self.turret_turn_rate = 2.0  # Radians per second
         
     def take_damage(self, damage):
+        print(f"{self.target_type} taking {damage} damage. Health: {self.health} -> {self.health - damage}")
         self.health -= damage
         if self.health <= 0:
             self.alive = False
             self.health = 0
+            print(f"{self.target_type} destroyed!")
             
     def update(self, dt, aircraft_list, projectiles_list):
         if not self.alive:
@@ -227,8 +229,12 @@ class Projectile:
             self.active = False
             return
 
+        # Apply gravity to bombs
+        if self.config.weapon_type == WeaponType.BOMB:
+            self.velocity[2] -= 200 * dt  # Gravity acceleration
+
         # Missile tracking
-        if self.config.tracking and self.target and self.target.alive:
+        if self.config.tracking and self.target and hasattr(self.target, 'alive') and self.target.alive:
             target_pos = self.target.pos
             to_target = target_pos - self.pos
             distance = np.linalg.norm(to_target)
@@ -252,6 +258,41 @@ class Projectile:
         # Update position
         self.pos += self.velocity * dt
 
+        # Check for ground impact (for bombs and other projectiles)
+        if self.pos[2] <= 0:  # Hit ground
+            self.pos[2] = 0  # Clamp to ground level
+            
+            # Check for ground target hits
+            if ground_targets:
+                for target in ground_targets:
+                    if target.alive and target.team != self.team:
+                        distance_2d = np.linalg.norm(self.pos[:2] - target.pos[:2])
+                        # hit_radius = self.config.blast_radius if self.config.blast_radius > 0 else 15
+                        # In Projectile.update() method, for direct hits on ground targets
+                        hit_distance = target.size + (self.config.blast_radius if self.config.blast_radius > 0 else 8)
+                        if distance_2d <= hit_distance:
+                            print(f"Ground target hit! Damage: {self.config.damage}, Distance: {distance_2d:.1f}")
+                            target.take_damage(self.config.damage)
+                            self.active = False
+                            return
+            
+            # Projectile hit ground without hitting target
+            if self.config.weapon_type == WeaponType.BOMB or self.config.blast_radius > 0:
+                # Still check for blast damage to nearby targets
+                if ground_targets:
+                    for target in ground_targets:
+                        if target.alive and target.team != self.team:
+                            distance_2d = np.linalg.norm(self.pos[:2] - target.pos[:2])
+                            if distance_2d <= self.config.blast_radius:
+                                # Reduced damage based on distance from blast center
+                                damage_factor = max(0.3, 1.0 - (distance_2d / self.config.blast_radius))
+                                damage = self.config.damage * damage_factor
+                                print(f"Blast damage to ground target! Damage: {damage:.1f}, Distance: {distance_2d:.1f}")
+                                target.take_damage(damage)
+            
+            self.active = False
+            return
+
         # Check for hits on aircraft
         for aircraft in aircraft_list:
             if aircraft.team != self.team and aircraft.alive:
@@ -263,16 +304,17 @@ class Projectile:
                     self.active = False
                     return
                     
-        # Check for hits on ground targets
-        if ground_targets and self.config.can_target_ground:
+        # Check for direct hits on ground targets (for non-ground-impacting projectiles)
+        if ground_targets and self.pos[2] > 0:  # Still in air
             for target in ground_targets:
                 if target.team != self.team and target.alive:
                     # Check if projectile is close to ground level and near target
-                    if self.pos[2] < 50:  # Near ground
+                    if self.pos[2] < 30:  # Low altitude
                         distance_2d = np.linalg.norm(self.pos[:2] - target.pos[:2])
-                        hit_distance = target.size + (self.config.blast_radius or 10)
+                        hit_distance = target.size + 5
                         
                         if distance_2d < hit_distance:
+                            print(f"Direct hit on ground target! Damage: {self.config.damage}")
                             target.take_damage(self.config.damage)
                             self.active = False
                             return
@@ -370,7 +412,15 @@ class Aircraft:
         to_target_normalized = to_target / distance
         angle = math.acos(np.clip(np.dot(forward, to_target_normalized), -1, 1))
         
-        max_angle = math.pi / 3 if is_ground else math.pi / 4  # Wider angle for ground targets
+        # More permissive angle for ground targets and bombs
+        if is_ground:
+            if weapon.weapon_type == WeaponType.BOMB:
+                max_angle = math.pi / 2  # 90 degree cone for bombs
+            else:
+                max_angle = math.pi / 3  # 60 degree cone for other ground weapons
+        else:
+            max_angle = math.pi / 4  # 45 degree cone for air targets
+            
         return angle < max_angle
 
     def fire_weapon(self):
@@ -533,10 +583,29 @@ class Aircraft:
                     if weapon.weapon_type == WeaponType.BOMB and weapon.ammo_count > 0:
                         self.current_weapon = i
                         break
+                        
+                # Drop bombs when overhead (improved bombing logic)
+                bomb_range = 80  # Drop bombs when within this range
+                altitude_factor = max(1.0, self.pos[2] / 200)  # Account for altitude in drop timing
+                effective_range = bomb_range * altitude_factor
                 
-                # Drop bombs when close
-                if distance_2d < 100 and self.can_fire_at_target(target, is_ground=True):
-                    self.try_fire_weapon()
+                if distance_2d < effective_range:
+                    # Check if we have bombs and haven't fired recently
+                    current_weapon = self.weapons[self.current_weapon]
+                    if (current_weapon.weapon_type == WeaponType.BOMB and 
+                        current_weapon.ammo_count > 0 and
+                        self.weapon_cooldowns[self.current_weapon] <= 0):
+                        
+                        print(f"Dropping bomb! Distance to target: {distance_2d:.1f}, Altitude: {self.pos[2]:.1f}")
+                        projectile = self.fire_weapon()
+                        return projectile
+                        
+                # If no bombs left, switch to other ground-attack weapons
+                if self.weapons[self.current_weapon].ammo_count <= 0:
+                    for i, weapon in enumerate(self.weapons):
+                        if weapon.can_target_ground and weapon.ammo_count > 0:
+                            self.current_weapon = i
+                            break
 
     def execute_follow(self, dt, maneuver):
         """Follow another aircraft"""
@@ -847,7 +916,8 @@ class DogfightSimulation:
             range=300,
             fire_rate=10,
             velocity=600,
-            ammo_count=5000
+            ammo_count=5000,
+            can_target_ground=True
         )
         
         missile = WeaponConfig(
@@ -873,12 +943,12 @@ class DogfightSimulation:
         
         bomb = WeaponConfig(
             weapon_type=WeaponType.BOMB,
-            damage=200,
-            range=150,
-            fire_rate=1,
-            velocity=100,
-            ammo_count=6,
-            blast_radius=40,
+            damage=150,  # Increased damage
+            range=200,   # Increased range
+            fire_rate=0.8,  # Slightly faster
+            velocity=50,    # Slower initial velocity
+            ammo_count=8,   # More bombs
+            blast_radius=50,  # Larger blast radius
             can_target_ground=True
         )
         
@@ -893,7 +963,7 @@ class DogfightSimulation:
             weapons=[machine_gun, missile]
         )
         
-        # Attack aircraft config
+        # Attack aircraft config - add bombs
         attack_config = AircraftConfig(
             max_speed=100,
             acceleration=0.8,
@@ -901,7 +971,7 @@ class DogfightSimulation:
             climb_rate=20,
             max_altitude=400,
             health=150,
-            weapons=[cannon, bomb]
+            weapons=[cannon, bomb, machine_gun]  # Added machine gun as backup
         )
         
         # Create aircraft
@@ -919,14 +989,14 @@ class DogfightSimulation:
             else:
                 aircraft.heading = math.pi  # Face left
                 
-        # Create ground targets
+        # Create ground targets with more health
         self.ground_targets = [
-            GroundTarget(400, 300, "tank", 80, "red"),
-            GroundTarget(450, 320, "tank", 80, "red"),
-            GroundTarget(500, 300, "building", 150, "red"),
-            GroundTarget(800, 500, "aa_gun", 100, "red"),
-            GroundTarget(200, 600, "tank", 80, "blue"),
-            GroundTarget(150, 580, "building", 150, "blue"),
+            GroundTarget(400, 300, "tank", 100, "red"),
+            GroundTarget(450, 320, "tank", 100, "red"),
+            GroundTarget(500, 300, "building", 200, "red"),
+            GroundTarget(800, 500, "aa_gun", 120, "red"),
+            GroundTarget(200, 600, "tank", 100, "blue"),
+            GroundTarget(150, 580, "building", 200, "blue"),
         ]
 
     def add_maneuver_to_aircraft(self, aircraft_index, maneuver):
@@ -954,11 +1024,30 @@ class DogfightSimulation:
 
     def draw_ground_target(self, target):
         """Draw a ground target with rotating turret if applicable"""
+        # Show destroyed targets briefly
         if not target.alive:
-            return
+            # Draw wreckage/explosion effect
+            x, y = int(target.pos[0]), int(target.pos[1])
             
+            # Draw explosion/smoke effect
+            for i in range(3):
+                smoke_offset = random.randint(-8, 8)
+                smoke_x = x + smoke_offset
+                smoke_y = y + smoke_offset
+                smoke_size = random.randint(3, 8)
+                pygame.draw.circle(self.screen, (100, 100, 100), (smoke_x, smoke_y), smoke_size)
+                
+            # Draw wreckage
+            wreck_color = (40, 40, 40)
+            if target.target_type == "building":
+                pygame.draw.rect(self.screen, wreck_color, (x - 6, y - 6, 12, 12))
+            else:
+                pygame.draw.circle(self.screen, wreck_color, (x, y), 6)
+            
+            return  
+        # ELSE still alive
         x, y = int(target.pos[0]), int(target.pos[1])
-        
+
         # Different shapes for different types
         if target.target_type == "tank":
             # Draw tank as rectangle with turret
@@ -1023,16 +1112,24 @@ class DogfightSimulation:
             
         # Health bar for ground targets
         if target.health < target.max_health:
+            # Always show health bar for better visibility
             bar_width = 20
             bar_height = 3
             health_ratio = target.health / target.max_health
             health_width = int(bar_width * health_ratio)
-            
+
+            # Background (red portion)
             pygame.draw.rect(self.screen, (255, 0, 0), 
                             (x - bar_width//2, y - target.size - 8, bar_width, bar_height))
+            # Health (green portion)
             pygame.draw.rect(self.screen, (0, 255, 0), 
                             (x - bar_width//2, y - target.size - 8, health_width, bar_height))
-            
+
+            # Add health text for precise tracking
+            health_text = f"{int(target.health)}/{int(target.max_health)}"
+            text_surface = self.small_font.render(health_text, True, (255, 255, 255))
+            self.screen.blit(text_surface, (x + target.size + 5, y - target.size))
+
         # Show targeting indicator for AA guns when they're tracking
         if (target.target_type == "aa_gun" and target.can_shoot and 
             abs(target.turret_angle - target.target_turret_angle) > 0.1):
