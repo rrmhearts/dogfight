@@ -82,12 +82,18 @@ class GroundTarget:
         self.turret_turn_rate = 2.0  # Radians per second
         
     def take_damage(self, damage):
-        print(f"{self.target_type} taking {damage} damage. Health: {self.health} -> {self.health - damage}")
+        if not self.alive:
+            return
+            
+        print(f"{self.target_type} taking {damage:.1f} damage. Health: {self.health:.1f} -> {self.health - damage:.1f}")
         self.health -= damage
+        
         if self.health <= 0:
             self.alive = False
             self.health = 0
             print(f"{self.target_type} destroyed!")
+            # Add destruction time for visual effects
+            self.destruction_time = pygame.time.get_ticks()
             
     def update(self, dt, aircraft_list, projectiles_list):
         if not self.alive:
@@ -262,33 +268,28 @@ class Projectile:
         if self.pos[2] <= 0:  # Hit ground
             self.pos[2] = 0  # Clamp to ground level
             
-            # Check for ground target hits
-            if ground_targets:
+            # Calculate blast damage for all nearby ground targets
+            if ground_targets and self.config.blast_radius > 0:
                 for target in ground_targets:
                     if target.alive and target.team != self.team:
                         distance_2d = np.linalg.norm(self.pos[:2] - target.pos[:2])
-                        # hit_radius = self.config.blast_radius if self.config.blast_radius > 0 else 15
-                        # In Projectile.update() method, for direct hits on ground targets
-                        hit_distance = target.size + (self.config.blast_radius if self.config.blast_radius > 0 else 8)
-                        if distance_2d <= hit_distance:
-                            print(f"Ground target hit! Damage: {self.config.damage}, Distance: {distance_2d:.1f}")
-                            target.take_damage(self.config.damage)
-                            self.active = False
-                            return
+                        if distance_2d <= self.config.blast_radius:
+                            # Calculate damage falloff
+                            damage_factor = max(0.2, 1.0 - (distance_2d / self.config.blast_radius))
+                            damage = self.config.damage * damage_factor
+                            print(f"Blast damage to {target.target_type}: {damage:.1f}, Distance: {distance_2d:.1f}")
+                            target.take_damage(damage)
             
-            # Projectile hit ground without hitting target
-            if self.config.weapon_type == WeaponType.BOMB or self.config.blast_radius > 0:
-                # Still check for blast damage to nearby targets
-                if ground_targets:
-                    for target in ground_targets:
-                        if target.alive and target.team != self.team:
-                            distance_2d = np.linalg.norm(self.pos[:2] - target.pos[:2])
-                            if distance_2d <= self.config.blast_radius:
-                                # Reduced damage based on distance from blast center
-                                damage_factor = max(0.3, 1.0 - (distance_2d / self.config.blast_radius))
-                                damage = self.config.damage * damage_factor
-                                print(f"Blast damage to ground target! Damage: {damage:.1f}, Distance: {distance_2d:.1f}")
-                                target.take_damage(damage)
+            # Check for direct hits (higher damage, smaller radius)
+            elif ground_targets:
+                for target in ground_targets:
+                    if target.alive and target.team != self.team:
+                        distance_2d = np.linalg.norm(self.pos[:2] - target.pos[:2])
+                        direct_hit_radius = target.size + 10  # Slightly larger than target
+                        if distance_2d <= direct_hit_radius:
+                            print(f"Direct hit on {target.target_type}! Damage: {self.config.damage}")
+                            target.take_damage(self.config.damage)
+                            break
             
             self.active = False
             return
@@ -545,67 +546,60 @@ class Aircraft:
                 self.try_fire_weapon()
 
     def execute_bomb_target(self, dt, maneuver, ground_targets):
-        """Bomb run on ground targets"""
+        """Execute bombing run on ground target"""
         if not maneuver.target or not maneuver.target.alive:
-            # Find new ground target
-            target, _ = self.find_nearest_ground_target(ground_targets)
-            maneuver.target = target
-            
-        if maneuver.target and maneuver.target.alive:
-            target = maneuver.target
-            to_target = target.pos - self.pos
-            distance_2d = np.linalg.norm(to_target[:2])
-            
-            # Approach phase
-            if 'phase' not in self.maneuver_state:
-                self.maneuver_state['phase'] = 'approach'
-                
-            if self.maneuver_state['phase'] == 'approach':
-                # Climb to bombing altitude
-                bomb_altitude = maneuver.parameters.get('altitude', 300)
-                if self.pos[2] < bomb_altitude - 20:
-                    self.pitch = min(0.3, self.pitch + dt * 0.5)
-                else:
-                    self.maneuver_state['phase'] = 'attack'
-                    
-                # Head towards target
-                desired_heading = math.atan2(to_target[1], to_target[0])
-                self.turn_towards_heading(desired_heading, dt)
-                
-            elif self.maneuver_state['phase'] == 'attack':
-                # Level flight towards target
-                self.pitch *= 0.9
-                desired_heading = math.atan2(to_target[1], to_target[0])
-                self.turn_towards_heading(desired_heading, dt)
-                
-                # Switch to bomb weapon if available
+            # Find new ground target if original is destroyed
+            nearest_target, _ = self.find_nearest_ground_target(ground_targets)
+            if nearest_target:
+                maneuver.target = nearest_target
+            else:
+                return  # No valid targets
+        
+        target = maneuver.target
+        to_target = target.pos - self.pos
+        distance = np.linalg.norm(to_target)
+        
+        # Get proper trajectory
+        target_heading, target_pitch = self.calculate_bomb_trajectory(target.pos)
+        
+        # Turn towards target
+        self.turn_towards_heading(target_heading, dt)
+        
+        # Adjust pitch for bombing run
+        pitch_diff = target_pitch - self.pitch
+        max_pitch_rate = 1.0 * dt  # radians per second
+        if abs(pitch_diff) <= max_pitch_rate:
+            self.pitch = target_pitch
+        else:
+            self.pitch += max_pitch_rate if pitch_diff > 0 else -max_pitch_rate
+        
+        # Maintain bombing altitude
+        desired_altitude = maneuver.parameters.get('altitude', 300)
+        if self.pos[2] < desired_altitude - 20:
+            self.climb(dt)
+        elif self.pos[2] > desired_altitude + 20:
+            self.descend(dt)
+        
+        # Move forward
+        self.accelerate(dt)
+        
+        # Fire bombs when in range and properly aligned
+        if distance < 400 and distance > 50:  # Bombing range
+            heading_diff = abs(self.heading - target_heading)
+            if heading_diff < 0.3:  # Within ~17 degrees
+                # Switch to bomb weapon
                 for i, weapon in enumerate(self.weapons):
                     if weapon.weapon_type == WeaponType.BOMB and weapon.ammo_count > 0:
                         self.current_weapon = i
                         break
-                        
-                # Drop bombs when overhead (improved bombing logic)
-                bomb_range = 80  # Drop bombs when within this range
-                altitude_factor = max(1.0, self.pos[2] / 200)  # Account for altitude in drop timing
-                effective_range = bomb_range * altitude_factor
                 
-                if distance_2d < effective_range:
-                    # Check if we have bombs and haven't fired recently
-                    current_weapon = self.weapons[self.current_weapon]
-                    if (current_weapon.weapon_type == WeaponType.BOMB and 
-                        current_weapon.ammo_count > 0 and
-                        self.weapon_cooldowns[self.current_weapon] <= 0):
-                        
-                        print(f"Dropping bomb! Distance to target: {distance_2d:.1f}, Altitude: {self.pos[2]:.1f}")
-                        projectile = self.fire_weapon()
-                        return projectile
-                        
-                # If no bombs left, switch to other ground-attack weapons
-                if self.weapons[self.current_weapon].ammo_count <= 0:
-                    for i, weapon in enumerate(self.weapons):
-                        if weapon.can_target_ground and weapon.ammo_count > 0:
-                            self.current_weapon = i
-                            break
+                # Fire if we have bombs
+                if (self.weapons[self.current_weapon].weapon_type == WeaponType.BOMB and 
+                    self.weapon_cooldowns[self.current_weapon] <= 0):
+                    projectile = self.fire_weapon()
+                    if projectile:
+                        # Add projectile to game (this needs to be handled by the simulation)
+                        print(f"Bombing {target.target_type} at distance {distance:.1f}")
 
     def execute_follow(self, dt, maneuver):
         """Follow another aircraft"""
@@ -831,6 +825,39 @@ class Aircraft:
             self.maneuver_timer = 0.0
             self.maneuver_state.clear()
 
+    def calculate_bomb_trajectory(self, target_pos):
+        """Calculate proper bombing trajectory accounting for altitude and velocity"""
+        if not target_pos.any():
+            return self.heading, self.pitch
+        
+        # Calculate horizontal distance to target
+        horizontal_distance = np.linalg.norm(target_pos[:2] - self.pos[:2])
+        altitude_difference = self.pos[2] - target_pos[2]
+        
+        # Calculate required heading to target
+        to_target = target_pos - self.pos
+        target_heading = math.atan2(to_target[1], to_target[0])
+        
+        # Calculate dive angle for bombing (simple ballistic calculation)
+        # Account for forward velocity and gravity
+        if horizontal_distance > 0:
+            # Simple approximation for bomb drop angle
+            forward_speed = np.linalg.norm(self.velocity[:2])
+            if forward_speed > 0:
+                # Time to fall from current altitude
+                fall_time = math.sqrt(2 * altitude_difference / 200)  # 200 is gravity constant
+                # Horizontal distance covered during fall
+                horizontal_travel = forward_speed * fall_time
+                # Adjust target point
+                lead_distance = max(0, horizontal_travel - horizontal_distance * 0.5)
+                target_pitch = -math.atan(altitude_difference / (horizontal_distance + lead_distance))
+            else:
+                target_pitch = -math.atan(altitude_difference / horizontal_distance)
+        else:
+            target_pitch = -math.pi / 4  # Default 45-degree dive
+        
+        return target_heading, target_pitch
+
     def ai_update(self, dt, aircraft_list, ground_targets=None):
         if not self.alive:
             return
@@ -1026,6 +1053,12 @@ class DogfightSimulation:
         """Draw a ground target with rotating turret if applicable"""
         # Show destroyed targets briefly
         if not target.alive:
+            # Show destruction effect for 3 seconds then remove
+            if hasattr(target, 'destruction_time'):
+                time_since_destruction = pygame.time.get_ticks() - target.destruction_time
+                if time_since_destruction > 3000:  # 3 seconds
+                    return  # Don't draw anything
+            
             # Draw wreckage/explosion effect
             x, y = int(target.pos[0]), int(target.pos[1])
             
