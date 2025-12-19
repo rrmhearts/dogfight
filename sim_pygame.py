@@ -199,7 +199,7 @@ class GroundTarget:
             fire_rate=0.5,
             velocity=600,
             ammo_count=999,
-            blast_radius=10
+            blast_radius=150
         )
         
         # Fire from turret position
@@ -273,6 +273,7 @@ class Projectile:
                 for target in ground_targets:
                     if target.alive and target.team != self.team:
                         distance_2d = np.linalg.norm(self.pos[:2] - target.pos[:2])
+                        print("gt dist: ", distance_2d)
                         if distance_2d <= self.config.blast_radius:
                             # Calculate damage falloff
                             damage_factor = max(0.2, 1.0 - (distance_2d / self.config.blast_radius))
@@ -573,15 +574,16 @@ class Aircraft:
         else:
             self.pitch += max_pitch_rate if pitch_diff > 0 else -max_pitch_rate
         
+        # # Turn towards target
+        # desired_heading = math.atan2(to_target[1], to_target[0])
+        # self.turn_towards_heading(desired_heading, dt)
+        
         # Maintain bombing altitude
         desired_altitude = maneuver.parameters.get('altitude', 300)
-        if self.pos[2] < desired_altitude - 20:
-            self.climb(dt)
-        elif self.pos[2] > desired_altitude + 20:
-            self.descend(dt)
-        
-        # Move forward
-        self.accelerate(dt)
+        self.adjust_altitude(desired_altitude, dt)
+        # This uses the existing physics system in ai_update
+        ## Move forward
+        ## self.accelerate(dt)
         
         # Fire bombs when in range and properly aligned
         if distance < 400 and distance > 50:  # Bombing range
@@ -598,8 +600,15 @@ class Aircraft:
                     self.weapon_cooldowns[self.current_weapon] <= 0):
                     projectile = self.fire_weapon()
                     if projectile:
-                        # Add projectile to game (this needs to be handled by the simulation)
                         print(f"Bombing {target.target_type} at distance {distance:.1f}")
+                        return projectile
+
+        # If no bombs left, switch to other ground-attack weapons
+        if self.weapons[self.current_weapon].ammo_count <= 0:
+            for i, weapon in enumerate(self.weapons):
+                if weapon.can_target_ground and weapon.ammo_count > 0:
+                    self.current_weapon = i
+                    break
 
     def execute_follow(self, dt, maneuver):
         """Follow another aircraft"""
