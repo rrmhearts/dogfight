@@ -236,8 +236,13 @@ class Projectile:
             return
 
         # Apply gravity to bombs
+        # Enhanced gravity for bombs
         if self.config.weapon_type == WeaponType.BOMB:
             self.velocity[2] -= 200 * dt  # Gravity acceleration
+            
+            # Add slight air resistance for realism
+            drag_factor = 0.98  
+            self.velocity *= drag_factor
 
         # Missile tracking
         if self.config.tracking and self.target and hasattr(self.target, 'alive') and self.target.alive:
@@ -265,32 +270,30 @@ class Projectile:
         self.pos += self.velocity * dt
 
         # Check for ground impact (for bombs and other projectiles)
-        if self.pos[2] <= 0:  # Hit ground
+        if self.pos[2] <= 5:  # Hit ground
             self.pos[2] = 0  # Clamp to ground level
-            
-            # Calculate blast damage for all nearby ground targets
-            if ground_targets and self.config.blast_radius > 0:
+            print(f"Projectile impact at ({self.pos[0]:.1f}, {self.pos[1]:.1f})")
+
+            # Ground target damage calculation
+            if ground_targets:
                 for target in ground_targets:
                     if target.alive and target.team != self.team:
-                        distance_2d = np.linalg.norm(self.pos[:2] - target.pos[:2])
-                        print("gt dist: ", distance_2d)
-                        if distance_2d <= self.config.blast_radius:
-                            # Calculate damage falloff
-                            damage_factor = max(0.2, 1.0 - (distance_2d / self.config.blast_radius))
-                            damage = self.config.damage * damage_factor
-                            print(f"Blast damage to {target.target_type}: {damage:.1f}, Distance: {distance_2d:.1f}")
+                        impact_distance = np.linalg.norm(self.pos[:2] - target.pos[:2])
+                        
+                        # Direct hit check (higher priority)
+                        if impact_distance <= target.size + 15:
+                            damage = self.config.damage
+                            print(f"DIRECT HIT on {target.target_type}! Damage: {damage}")
                             target.take_damage(damage)
-            
-            # Check for direct hits (higher damage, smaller radius)
-            elif ground_targets:
-                for target in ground_targets:
-                    if target.alive and target.team != self.team:
-                        distance_2d = np.linalg.norm(self.pos[:2] - target.pos[:2])
-                        direct_hit_radius = target.size + 10  # Slightly larger than target
-                        if distance_2d <= direct_hit_radius:
-                            print(f"Direct hit on {target.target_type}! Damage: {self.config.damage}")
-                            target.take_damage(self.config.damage)
-                            break
+                            self.active = False
+                            return
+                        
+                        # Blast damage check
+                        elif self.config.blast_radius > 0 and impact_distance <= self.config.blast_radius:
+                            damage_factor = max(0.3, 1.0 - (impact_distance / self.config.blast_radius))
+                            damage = self.config.damage * damage_factor
+                            print(f"Blast damage to {target.target_type}: {damage:.1f} (distance: {impact_distance:.1f})")
+                            target.take_damage(damage)
             
             self.active = False
             return
@@ -547,7 +550,7 @@ class Aircraft:
                 self.try_fire_weapon()
 
     def execute_bomb_target(self, dt, maneuver, ground_targets):
-        """Execute bombing run on ground target"""
+        """Execute bombing run with improved targeting logic"""
         if not maneuver.target or not maneuver.target.alive:
             # Find new ground target if original is destroyed
             nearest_target, _ = self.find_nearest_ground_target(ground_targets)
@@ -558,58 +561,117 @@ class Aircraft:
         
         target = maneuver.target
         to_target = target.pos - self.pos
-        distance = np.linalg.norm(to_target)
+        horizontal_distance = np.linalg.norm(to_target[:2])
         
-        # Get proper trajectory
-        target_heading, target_pitch = self.calculate_bomb_trajectory(target.pos)
+        # Initialize bombing phases
+        if 'phase' not in self.maneuver_state:
+            self.maneuver_state['phase'] = 'approach'
+            self.maneuver_state['bombing_run_started'] = False
         
-        # Turn towards target
-        self.turn_towards_heading(target_heading, dt)
+        # Phase 1: Approach and climb to bombing altitude
+        if self.maneuver_state['phase'] == 'approach':
+            bomb_altitude = maneuver.parameters.get('altitude', 300)
+            
+            # Climb to bombing altitude
+            if self.pos[2] < bomb_altitude - 30:
+                self.adjust_altitude(bomb_altitude, dt)
+                
+                # Head towards target area during climb
+                desired_heading = math.atan2(to_target[1], to_target[0])
+                self.turn_towards_heading(desired_heading, dt)
+                
+            else:
+                # Reached altitude, begin bombing run
+                self.maneuver_state['phase'] = 'bombing_run'
+                print(f"Beginning bombing run on {target.target_type}")
         
-        # Adjust pitch for bombing run
-        pitch_diff = target_pitch - self.pitch
-        max_pitch_rate = 1.0 * dt  # radians per second
-        if abs(pitch_diff) <= max_pitch_rate:
-            self.pitch = target_pitch
-        else:
-            self.pitch += max_pitch_rate if pitch_diff > 0 else -max_pitch_rate
-        
-        # # Turn towards target
-        # desired_heading = math.atan2(to_target[1], to_target[0])
-        # self.turn_towards_heading(desired_heading, dt)
-        
-        # Maintain bombing altitude
-        desired_altitude = maneuver.parameters.get('altitude', 300)
-        self.adjust_altitude(desired_altitude, dt)
-        # This uses the existing physics system in ai_update
-        ## Move forward
-        ## self.accelerate(dt)
-        
-        # Fire bombs when in range and properly aligned
-        if distance < 400 and distance > 50:  # Bombing range
-            heading_diff = abs(self.heading - target_heading)
-            if heading_diff < 0.3:  # Within ~17 degrees
+        # Phase 2: Execute bombing run
+        elif self.maneuver_state['phase'] == 'bombing_run':
+            # Get proper trajectory for bomb drop
+            target_heading, target_pitch = self.calculate_bomb_trajectory(target.pos)
+            
+            # Turn towards proper heading
+            self.turn_towards_heading(target_heading, dt)
+            
+            # Maintain level flight for accuracy
+            self.adjust_altitude(maneuver.parameters.get('altitude', 300), dt)
+            
+            # Check if we're aligned for bombing
+            heading_error = abs(self.heading - target_heading)
+            altitude_ok = abs(self.pos[2] - maneuver.parameters.get('altitude', 300)) < 50
+            
+            # Calculate optimal bomb release point
+            physics_optimal_distance = self.calculate_bomb_release_distance(target.pos)
+            
+            # Drop bombs when conditions are right
+            if (horizontal_distance < physics_optimal_distance + 50 and 
+                horizontal_distance > physics_optimal_distance - 20 and
+                heading_error < 0.2 and  # Within ~11 degrees
+                altitude_ok):
+                
                 # Switch to bomb weapon
                 for i, weapon in enumerate(self.weapons):
                     if weapon.weapon_type == WeaponType.BOMB and weapon.ammo_count > 0:
                         self.current_weapon = i
                         break
                 
-                # Fire if we have bombs
-                if (self.weapons[self.current_weapon].weapon_type == WeaponType.BOMB and 
+                # Drop bomb
+                current_weapon = self.weapons[self.current_weapon]
+                if (current_weapon.weapon_type == WeaponType.BOMB and 
                     self.weapon_cooldowns[self.current_weapon] <= 0):
+                    
+                    print(f"BOMBS AWAY! Distance: {horizontal_distance:.1f}, Optimal: {physics_optimal_distance:.1f}")
                     projectile = self.fire_weapon()
                     if projectile:
-                        print(f"Bombing {target.target_type} at distance {distance:.1f}")
                         return projectile
+            
+            # If we've passed the target, complete the run
+            if horizontal_distance < 50:
+                self.maneuver_state['phase'] = 'egress'
+        
+        # Phase 3: Egress (leave target area)
+        elif self.maneuver_state['phase'] == 'egress':
+            # Continue current heading to clear target area
+            egress_distance = 200
+            if horizontal_distance > egress_distance:
+                # Far enough away, can end maneuver or start new attack run
+                if any(w.weapon_type == WeaponType.BOMB and w.ammo_count > 0 for w in self.weapons):
+                    # Have more bombs, start new run
+                    self.maneuver_state['phase'] = 'approach'
+                # Otherwise maneuver will end naturally when timer expires
 
-        # If no bombs left, switch to other ground-attack weapons
-        if self.weapons[self.current_weapon].ammo_count <= 0:
-            for i, weapon in enumerate(self.weapons):
-                if weapon.can_target_ground and weapon.ammo_count > 0:
-                    self.current_weapon = i
-                    break
-
+    def calculate_bomb_release_distance(self, target_pos):
+        """Calculate optimal distance from target to release bomb"""
+        # Aircraft state
+        altitude = self.pos[2]
+        forward_speed = np.linalg.norm(self.velocity[:2])
+        
+        # Physics constants  
+        gravity = 200.0
+        initial_bomb_downward_velocity = 50.0
+        
+        # Calculate fall time
+        if altitude > target_pos[2]:
+            altitude_diff = altitude - target_pos[2]
+            
+            # Solve quadratic equation for fall time
+            a = 0.5 * gravity
+            b = initial_bomb_downward_velocity  
+            c = -altitude_diff
+            
+            discriminant = b*b - 4*a*c
+            if discriminant >= 0:
+                fall_time = (-b + math.sqrt(discriminant)) / (2*a)
+            else:
+                fall_time = 1.0  # Fallback
+            
+            # Distance bomb travels horizontally during fall
+            horizontal_bomb_travel = forward_speed * fall_time * 0.9  # 90% of aircraft speed
+            
+            return horizontal_bomb_travel
+        else:
+            return 10.0  # Default distance
+    
     def execute_follow(self, dt, maneuver):
         """Follow another aircraft"""
         if not maneuver.target or not maneuver.target.alive:
@@ -835,35 +897,65 @@ class Aircraft:
             self.maneuver_state.clear()
 
     def calculate_bomb_trajectory(self, target_pos):
-        """Calculate proper bombing trajectory accounting for altitude and velocity"""
+        """Calculate proper bombing trajectory with realistic ballistic physics"""
         if not target_pos.any():
             return self.heading, self.pitch
         
-        # Calculate horizontal distance to target
-        horizontal_distance = np.linalg.norm(target_pos[:2] - self.pos[:2])
-        altitude_difference = self.pos[2] - target_pos[2]
+        # Current aircraft state
+        aircraft_pos = self.pos
+        aircraft_velocity = self.velocity
         
-        # Calculate required heading to target
-        to_target = target_pos - self.pos
-        target_heading = math.atan2(to_target[1], to_target[0])
+        # Calculate horizontal distance and altitude difference
+        horizontal_distance = np.linalg.norm(target_pos[:2] - aircraft_pos[:2])
+        altitude_difference = aircraft_pos[2] - target_pos[2]
         
-        # Calculate dive angle for bombing (simple ballistic calculation)
-        # Account for forward velocity and gravity
-        if horizontal_distance > 0:
-            # Simple approximation for bomb drop angle
-            forward_speed = np.linalg.norm(self.velocity[:2])
-            if forward_speed > 0:
-                # Time to fall from current altitude
-                fall_time = math.sqrt(2 * altitude_difference / 200)  # 200 is gravity constant
-                # Horizontal distance covered during fall
-                horizontal_travel = forward_speed * fall_time
-                # Adjust target point
-                lead_distance = max(0, horizontal_travel - horizontal_distance * 0.5)
-                target_pitch = -math.atan(altitude_difference / (horizontal_distance + lead_distance))
+        # Physics constants
+        gravity = 200.0  # Same as in projectile update
+        forward_speed = np.linalg.norm(aircraft_velocity[:2])
+        
+        if horizontal_distance > 0 and altitude_difference > 0:
+            # Calculate time for bomb to fall (accounting for initial downward velocity)
+            initial_downward_velocity = 50.0  # From fire_weapon method
+            # Using kinematic equation: h = v0*t + 0.5*g*t^2
+            # Solving quadratic equation for fall time
+            a = 0.5 * gravity
+            b = initial_downward_velocity
+            c = -altitude_difference
+            
+            discriminant = b*b - 4*a*c
+            if discriminant >= 0:
+                fall_time = (-b + math.sqrt(discriminant)) / (2*a)
             else:
-                target_pitch = -math.atan(altitude_difference / horizontal_distance)
+                fall_time = math.sqrt(2 * altitude_difference / gravity)  # Fallback
+            
+            # Calculate where aircraft will be when bomb should be dropped
+            horizontal_travel_during_fall = forward_speed * fall_time
+            
+            # Lead distance - drop bomb this far before target
+            lead_distance = horizontal_travel_during_fall * 0.9  # 80% compensation
+            
+            # Calculate drop point
+            to_target_normalized = (target_pos[:2] - aircraft_pos[:2]) / horizontal_distance
+            drop_point = target_pos[:2] - to_target_normalized * lead_distance
+            
+            # Calculate heading to drop point
+            to_drop_point = np.append(drop_point - aircraft_pos[:2], 0)
+            target_heading = math.atan2(to_drop_point[1], to_drop_point[0])
+            
+            # Calculate optimal dive angle for approach
+            approach_distance = np.linalg.norm(to_drop_point[:2])
+            if approach_distance > 100:
+                # Shallow dive for approach
+                target_pitch = -0.1
+            else:
+                # Level flight for bomb release
+                target_pitch = 0.0
+                
         else:
-            target_pitch = -math.pi / 4  # Default 45-degree dive
+            # Fallback for edge cases
+            to_target = target_pos - aircraft_pos
+            target_heading = math.atan2(to_target[1], to_target[0])
+            target_pitch = 0.0
         
         return target_heading, target_pitch
 
@@ -1270,8 +1362,25 @@ class DogfightSimulation:
             color = (255, 100, 0)
             size = 4
         elif projectile.config.weapon_type == WeaponType.BOMB:
-            color = (255, 150, 100)
-            size = 6
+            # Larger, more visible bombs
+            size = max(4, int(8 - z / 50))  # Size changes with altitude
+            color = (255, 180, 100)  # Orange color
+            
+            # Draw bomb body
+            pygame.draw.circle(self.screen, color, (x, y), size)
+            
+            # Draw falling trail
+            if projectile.velocity[2] < -10:  # Falling
+                trail_length = min(30, int(abs(projectile.velocity[2]) / 5))
+                trail_start_z = projectile.pos[2] + trail_length
+                trail_x, trail_y, _ = self.project_3d_to_2d([projectile.pos[0], projectile.pos[1], trail_start_z])
+                pygame.draw.line(self.screen, (150, 100, 50), (trail_x, trail_y), (x, y), 2)
+            
+            # Altitude indicator
+            if z > 50:
+                alt_text = f"{int(z)}m"
+                text = self.small_font.render(alt_text, True, (255, 255, 255))
+                self.screen.blit(text, (x + 8, y - 8))
         else:  # Cannon
             color = (255, 200, 0)
             size = 3
