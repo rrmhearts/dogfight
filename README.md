@@ -6,6 +6,10 @@ A real-time 3D aerial combat simulation with advanced AI maneuvers, ground targe
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Status](https://img.shields.io/badge/Status-Active-brightgreen.svg)
 
+**Coffee is a proven love language.** If this has proven helpful,
+
+[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.paypal.com/paypalme/rrmhearts)
+
 ## Features
 
 ### **Aircraft Systems**
