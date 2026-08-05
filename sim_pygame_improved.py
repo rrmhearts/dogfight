@@ -1259,6 +1259,107 @@ class DogfightSimulation:
         
         pygame.quit()
 
+def create_complex_scenario():
+    """Example of creating a complex scenario with ground targets and maneuvers"""
+    sim = DogfightSimulation()
+    sim.aircraft.clear()
+    sim.ground_targets.clear()
+    
+    # Create specialized weapon configs
+    air_to_air_missile = WeaponConfig(
+        weapon_type=WeaponType.MISSILE,
+        damage=120,
+        range=700,
+        fire_rate=0.4,
+        velocity=800,
+        ammo_count=6,
+        tracking=True,
+        blast_radius=25
+    )
+    
+    heavy_bomb = WeaponConfig(
+        weapon_type=WeaponType.BOMB,
+        damage=300,
+        range=100,
+        fire_rate=0.5,
+        velocity=80,
+        ammo_count=4,
+        blast_radius=50,
+        can_target_ground=True
+    )
+    
+    # Fighter-bomber config
+    fighter_bomber = AircraftConfig(
+        max_speed=110,
+        acceleration=0.9,
+        turn_rate=1.4,
+        climb_rate=25,
+        max_altitude=550,
+        health=120,
+        weapons=[WeaponConfig(WeaponType.CANNON, 60, 300, 4, 700, 80, can_target_ground=True), 
+                heavy_bomb, air_to_air_missile]
+    )
+    
+    # Add aircraft with initial maneuvers
+    blue_lead = Aircraft(150, 200, 250, "blue", fighter_bomber, (80, 120, 255))
+    blue_wing = Aircraft(200, 250, 230, "blue", fighter_bomber, (120, 150, 255))
+    
+    # Create ground assault force
+    sim.ground_targets.extend([
+        GroundTarget(600, 400, "tank", 100, "red"),
+        GroundTarget(650, 420, "tank", 100, "red"),
+        GroundTarget(620, 380, "aa_gun", 120, "red"),
+        GroundTarget(700, 400, "building", 200, "red"),
+    ])
+    
+    sim.aircraft = [blue_lead, blue_wing]
+    
+    # Setup coordinated attack mission
+    ground_target = sim.ground_targets[0]
+    blue_lead.add_maneuver(Maneuver(ManeuverType.CLIMB, 8.0, parameters={'altitude': 400}))
+    blue_lead.add_maneuver(Maneuver(ManeuverType.BOMB_TARGET, 20.0, target=ground_target, 
+                                  parameters={'altitude': 350}))
+    blue_lead.add_maneuver(Maneuver(ManeuverType.ORBIT, 15.0, target=ground_target,
+                                  parameters={'radius': 300, 'speed': 1.0}))
+    
+    # Wingman follows then flanks
+    blue_wing.add_maneuver(Maneuver(ManeuverType.FOLLOW, 10.0, target=blue_lead,
+                                  parameters={'distance': 80, 'offset_angle': math.pi/4}))
+    blue_wing.add_maneuver(Maneuver(ManeuverType.FLANK, 15.0, target=ground_target,
+                                  parameters={'radius': 200, 'side': 'right'}))
+    
+    return sim
+
 if __name__ == "__main__":
+    # Run default scenario
     simulation = DogfightSimulation()
+    
+    # Or run complex scenario
+    # simulation = create_complex_scenario()
+    
+    print("Dogfight Simulation Controls:")
+    print("=============================")
+    print("SPACE: Pause/Resume")
+    print("R: Reset simulation")
+    print("M: Run sample mission")
+    print("1-4: Select aircraft")
+    print("W/S: Change Weapon")
+    print("")
+    print("Selected Aircraft Commands:")
+    print("Q: Order dogfight")
+    print("E: Order bomb attack")
+    print("F: Order follow friendly")
+    print("O: Order orbit target")
+    print("G: Order flank attack")
+    print("I: Order intercept")
+    print("T: Order retreat")
+    print("C: Clear all orders")
+    print("")
+    print("Additional Features:")
+    print("- Ground targets: tanks, buildings, AA guns")
+    print("- AA guns will shoot at aircraft")
+    print("- Maneuver queue system")
+    print("- Multiple weapon types including bombs")
+    print("")
+    
     simulation.run()
