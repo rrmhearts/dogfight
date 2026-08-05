@@ -1,7 +1,6 @@
 # 3D Dogfight Simulation
 
 A real-time 3D aerial combat simulation with advanced AI maneuvers, ground targets, and tactical mission planning. Built with Python and Pygame, featuring an overhead tactical view of fully 3D flight physics.
-
 ![Dogfight Simulation](https://img.shields.io/badge/Python-3.7+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Status](https://img.shields.io/badge/Status-Active-brightgreen.svg)
@@ -22,7 +21,7 @@ A sophisticated maneuver system provides over ten distinct tactical maneuvers ra
 
 ### **Ground Warfare**
 
-Comprehensive ground warfare features multiple target types including armored tanks, strategic buildings, and defensive anti-aircraft gun emplacements. Active defense systems create dynamic threats as AA guns automatically detect and engage enemy aircraft within range. Coordinated bombing runs allow for strategic air-to-ground attack missions with proper altitude management and target approach procedures. The fully destructible environment means all ground targets can be eliminated through sustained attack, creating evolving tactical situations as defensive positions are neutralized.
+Comprehensive ground warfare features multiple target types including armored tanks, strategic buildings, and defensive anti-aircraft gun emplacements. Active defense systems create dynamic threats as AA guns automatically detect and engage enemy aircraft within range. Coordinated bombing runs allow for strategic air-to-ground attack missions with proper altitude management, target approach procedures, and **Continuously Computed Impact Point (CCIP)** targeting. The fully destructible environment means all ground targets can be eliminated through sustained attack, creating evolving tactical situations as defensive positions are neutralized.
 
 ### **Interactive Control**
 
@@ -31,33 +30,40 @@ Real-time command and control systems allow players to issue immediate orders to
 ## Installation
 
 ### Prerequisites
+
 ```bash
 pip install pygame numpy
 ```
 
 ### Quick Start
+
 ```bash
-git clone https://github.com/rrmhearts/dogfight-simulation.git
-cd dogfight-simulation
-python dogfight.py
+git clone https://github.com/rrmhearts/dogfight.git
+cd dogfight
+python sim_pygame_improved.py
 ```
 
 ## Controls
 
 ### Basic Controls
+
 | Key | Action |
 |-----|--------|
-| `SPACE` | Pause/Resume simulation |
+| `P` / `SPACE` | Pause/Resume simulation |
 | `R` | Reset simulation |
 | `M` | Run sample mission |
 | `1-4` | Select aircraft |
 
 ### Aircraft Commands
+
 | Key | Command | Description |
 |-----|---------|-------------|
 | `Q` | Dogfight | Engage nearest enemy aircraft |
-| `E` | Bomb Target | Attack nearest ground target |
-| `W/S` | Change weapon | switch between available weapon systems |
+| `E` | Bomb Target | Attack nearest ground target (CCIP assisted) |
+| `W/S` | Change Weapon | Switch between available weapon systems |
+| `X` | Deploy Flares | Deploy defensive countermeasures against incoming missiles |
+| `Arrows` | Manual Fly | Manually pitch and turn the selected aircraft |
+| `SPACE` | Manual Fire | Fire the selected aircraft's active weapon |
 | `F` | Follow | Follow nearest friendly aircraft |
 | `O` | Orbit | Circle around target |
 | `G` | Flank | Wide flanking attack |
@@ -67,59 +73,21 @@ python dogfight.py
 
 ## Aircraft Types
 
-### Fighter
-- **Role**: Air superiority
-- **Weapons**: Machine gun, Air-to-air missiles
-- **Characteristics**: High speed, excellent maneuverability
-- **Best For**: Dogfighting, escort missions
+The simulation features three distinct aircraft roles: high-speed **Fighters** equipped with machine guns and air-to-air missiles for dogfighting and air superiority, heavily armored **Attack Aircraft** armed with cannons and bombs for destroying ground targets, and versatile **Fighter-Bombers** that carry mixed weaponry for multi-role operations.
 
-### Attack Aircraft
-- **Role**: Ground attack
-- **Weapons**: Cannon, Bombs
-- **Characteristics**: Heavy armor, ground-attack capability
-- **Best For**: Tank busting, building destruction
+## Weapon Systems & Countermeasures
 
-### Fighter-Bomber
-- **Role**: Multi-role
-- **Weapons**: Cannon, Bombs, Missiles
-- **Characteristics**: Balanced performance
-- **Best For**: Mixed missions, versatile operations
+Available ordnance includes rapid-fire **machine guns** and heat-seeking **missiles** for air-to-air combat, along with heavy **cannons** and gravity-affected **bombs** (utilizing CCIP targeting) for air-to-ground strikes. Aircraft can deploy **flares** to decoy incoming missiles, while ground forces defend the airspace using automatic **AA guns**.
 
-## Weapon Systems
-
-### Air-to-Air
-- **Machine Gun**: High rate of fire, moderate damage
-- **Missiles**: Heat-seeking, high damage, limited ammo
-
-### Air-to-Ground
-- **Cannon**: High damage, can target ground units
-- **Bombs**: Massive damage, area effect, gravity-affected
-
-### Anti-Aircraft
-- **AA Guns**: Ground-based automatic defense systems
 
 ## Maneuver Types
 
-### Combat Maneuvers
-- **Dogfight**: Aggressive air-to-air engagement with lead calculation
-- **Attack Run**: High-speed direct assault on targets
-- **Flank**: Wide circling maneuver for positional advantage
-- **Intercept**: Predictive course to cut off enemy aircraft
-
-### Support Maneuvers
-- **Follow**: Formation flying with configurable distance and offset
-- **Orbit**: Circular patrol around specified point or target
-- **Escort**: Protective formation flying
-
-### Tactical Maneuvers
-- **Bomb Target**: Coordinated bombing run with altitude management
-- **Climb/Dive**: Altitude adjustment for tactical advantage
-- **Retreat**: Evasive withdrawal from dangerous situations
-- **Patrol**: Waypoint-based area coverage
-
+* **Combat Maneuvers:** Aircraft can execute aggressive **Dogfights** (with target lead calculation), high-speed **Attack Runs**, wide **Flanks**, and predictive **Intercept** courses to engage enemies.
+* **Support & Tactical Maneuvers:** Pilots can execute **Bomb Target** runs with CCIP release, **Follow** friendlies in configurable formations, **Orbit** a target, **Patrol** waypoints, **Climb** or **Dive** for altitude advantage, and **Retreat** from dangerous situations.
 ## Programming Guide
 
 ### Adding Custom Aircraft
+
 ```python
 # Define weapons
 custom_weapon = WeaponConfig(
@@ -143,11 +111,13 @@ custom_config = AircraftConfig(
     weapons=[custom_weapon]
 )
 
-# Add to simulation
-aircraft = sim.add_aircraft(x, y, z, "blue", custom_config, (0, 255, 0))
+# Add to simulation (append to aircraft list)
+sim.aircraft.append(Aircraft(x, y, z, "blue", custom_config, (0, 255, 0)))
+
 ```
 
 ### Creating Custom Missions
+
 ```python
 def create_strike_mission():
     sim = DogfightSimulation()
@@ -157,19 +127,33 @@ def create_strike_mission():
     escort = sim.aircraft[1]
     
     # Plan coordinated attack
-    striker.add_maneuver(Maneuver(ManeuverType.CLIMB, 5.0, 
-                                 parameters={'altitude': 400}))
-    striker.add_maneuver(Maneuver(ManeuverType.BOMB_TARGET, 20.0, 
-                                 target=ground_target))
+    striker.add_maneuver(Maneuver(
+        ManeuverType.CLIMB, 
+        5.0, 
+        parameters={'altitude': 400}
+    ))
+    striker.add_maneuver(Maneuver(
+        ManeuverType.BOMB_TARGET, 
+        20.0, 
+        target=ground_target
+    ))
     
-    escort.add_maneuver(Maneuver(ManeuverType.FOLLOW, 15.0, 
-                                target=striker))
-    escort.add_maneuver(Maneuver(ManeuverType.DOGFIGHT, 30.0))
+    escort.add_maneuver(Maneuver(
+        ManeuverType.FOLLOW, 
+        15.0, 
+        target=striker
+    ))
+    escort.add_maneuver(Maneuver(
+        ManeuverType.DOGFIGHT, 
+        30.0
+    ))
     
     return sim
+
 ```
 
 ### Adding Ground Targets
+
 ```python
 # Create different target types
 tank = GroundTarget(x, y, "tank", health=100, team="red")
@@ -177,59 +161,84 @@ building = GroundTarget(x, y, "building", health=200, team="red")
 aa_gun = GroundTarget(x, y, "aa_gun", health=80, team="red")
 
 sim.ground_targets.extend([tank, building, aa_gun])
+
 ```
 
 ## Architecture
 
 ### Core Classes
-- **`Aircraft`**: Individual aircraft with AI, physics, and weapon systems
-- **`Projectile`**: Bullets, missiles, and bombs with ballistics
-- **`GroundTarget`**: Static and active ground-based targets
-- **`Maneuver`**: Individual tactical commands with parameters
-- **`WeaponConfig`**: Weapon specifications and capabilities
-- **`AircraftConfig`**: Aircraft performance characteristics
+
+* **`Aircraft`**: Individual aircraft with AI, physics, manual override, and weapon systems
+* **`Projectile`**: Bullets, missiles, and bombs with gravity and ballistics
+* **`GroundTarget`**: Static and active ground-based targets
+* **`Maneuver`**: Individual tactical commands with parameters
+* **`WeaponConfig`**: Weapon specifications and capabilities
+* **`AircraftConfig`**: Aircraft performance characteristics
+* **`Effect`**: Visual particle systems for explosions and countermeasures
 
 ### Key Systems
-- **Physics Engine**: 3D movement with realistic flight dynamics
-- **AI System**: Behavior trees for tactical decision making
-- **Maneuver System**: Queue-based command execution
-- **Weapons System**: Projectile simulation with hit detection
-- **Rendering Engine**: 3D-to-2D projection with visual effects
+
+* **Physics Engine**: 3D movement with realistic flight dynamics, gravity, and CCIP targeting
+* **AI System**: Behavior trees for tactical decision making
+* **Maneuver System**: Queue-based command execution
+* **Weapons System**: Projectile simulation with hit detection
+* **Rendering Engine**: 3D-to-2D projection with visual effects and HUD overlays
 
 ## Advanced Features
 
 ### Mission Scripting
+
 Create complex multi-phase operations:
+
 ```python
 # Phase 1: SEAD (Suppression of Enemy Air Defenses)
-wild_weasel.add_maneuver(Maneuver(ManeuverType.BOMB_TARGET, 15.0, 
-                                 target=aa_gun))
+wild_weasel.add_maneuver(Maneuver(
+    ManeuverType.BOMB_TARGET, 
+    15.0, 
+    target=aa_gun
+))
 
 # Phase 2: Strike Package
 for bomber in strike_package:
-    bomber.add_maneuver(Maneuver(ManeuverType.BOMB_TARGET, 20.0, 
-                                target=primary_target))
+    bomber.add_maneuver(Maneuver(
+        ManeuverType.BOMB_TARGET, 
+        20.0, 
+        target=primary_target
+    ))
 
 # Phase 3: CAP (Combat Air Patrol)
 for fighter in escort:
-    fighter.add_maneuver(Maneuver(ManeuverType.ORBIT, 30.0, 
-                                 target=target_area))
+    fighter.add_maneuver(Maneuver(
+        ManeuverType.ORBIT, 
+        30.0, 
+        target=target_area
+    ))
+
 ```
 
 ### Formation Flying
+
 ```python
 # Diamond formation
-lead.add_maneuver(Maneuver(ManeuverType.PATROL, 60.0))
+lead.add_maneuver(Maneuver(
+    ManeuverType.PATROL, 
+    60.0
+))
 
-wing_left.add_maneuver(Maneuver(ManeuverType.FOLLOW, 60.0, 
-                               target=lead,
-                               parameters={'distance': 100, 
-                                         'offset_angle': math.pi/4}))
+wing_left.add_maneuver(Maneuver(
+    ManeuverType.FOLLOW, 
+    60.0, 
+    target=lead,
+    parameters={'distance': 100, 'offset_angle': math.pi/4}
+))
 
-wing_right.add_maneuver(Maneuver(ManeuverType.FOLLOW, 60.0, 
-                                target=lead,
-                                parameters={'distance': 100, 
-                                          'offset_angle': -math.pi/4}))
+wing_right.add_maneuver(Maneuver(
+    ManeuverType.FOLLOW, 
+    60.0, 
+    target=lead,
+    parameters={'distance': 100, 'offset_angle': -math.pi/4}
+))
+
 ```
 
 ## Contributing
@@ -243,7 +252,5 @@ wing_right.add_maneuver(Maneuver(ManeuverType.FOLLOW, 60.0,
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
 
 **Note**: This simulation is for educational and entertainment purposes. It demonstrates principles of flight dynamics, artificial intelligence, and real-time simulation programming.
