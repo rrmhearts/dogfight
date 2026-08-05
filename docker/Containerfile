@@ -1,0 +1,12 @@
+# Use a lightweight python base image
+FROM python:3.11-alpine
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the entity logic script into the container
+COPY entity.py /app/entity.py
+
+# No external libraries needed for the entity! (socket, math, json are built-in)
+# The entry point runs the python script
+ENTRYPOINT ["python", "/app/entity.py"]
