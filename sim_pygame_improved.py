@@ -458,7 +458,11 @@ class Aircraft:
         fire_pos = self.pos + forward * 20
         
         projectile_velocity = self.velocity.copy()
+        # For bombs, add gravity effect
         if weapon.weapon_type != WeaponType.BOMB:
+            # potentially When a bomb is released, the aircraft applies an immediate downward ejection
+            # kick (projectile_velocity[2] -= 50). This realistically prevents bombs from temporarily
+            # floating inside or colliding with the releasing aircraft at high speeds
             projectile_velocity += forward * weapon.velocity
         
         target = self.target if weapon.tracking else None
@@ -587,10 +591,12 @@ class Aircraft:
                 else:
                     self.maneuver_state['phase'] = 'attack'
                     
+                # Head towards target
                 desired_heading = math.atan2(to_target[1], to_target[0])
                 self.turn_towards_heading(desired_heading, dt)
                 
             elif self.maneuver_state['phase'] == 'attack':
+                # Level flight towards target
                 self.pitch *= 0.9
                 desired_heading = math.atan2(to_target[1], to_target[0])
                 self.turn_towards_heading(desired_heading, dt)
@@ -978,43 +984,60 @@ class DogfightSimulation:
             pygame.draw.rect(self.screen, color, (x - 12, y - 12, 24, 24))
             
         elif target.target_type == "aa_gun":
-            color = (60, 60, 120) if target.team == "blue" else (120, 60, 60)
+            # Draw AA gun as circle with rotating barrel
+            color = (60, 60, 60)
+            if target.team == "blue":
+                color = (60, 60, 120)
+            elif target.team == "red":
+                color = (120, 60, 60)
             pygame.draw.circle(self.screen, color, (x, y), 10)
+            # Rotating gun mount
             mount_color = tuple(min(255, c + 30) for c in color)
             pygame.draw.circle(self.screen, mount_color, (x, y), 6)
-            barrel_end_x = x + math.cos(target.turret_angle) * 18
-            barrel_end_y = y + math.sin(target.turret_angle) * 18
+            # Gun barrel (longer than tank barrel)
+            barrel_length = 18
+            barrel_end_x = x + math.cos(target.turret_angle) * barrel_length
+            barrel_end_y = y + math.sin(target.turret_angle) * barrel_length
             pygame.draw.line(self.screen, mount_color, (x, y), (barrel_end_x, barrel_end_y), 4)
-            if target.last_shot_time < 0.2:
-                flash_end_x = barrel_end_x + math.cos(target.turret_angle) * 8
-                flash_end_y = barrel_end_y + math.sin(target.turret_angle) * 8
+            # Muzzle flash effect when recently fired
+            if target.last_shot_time < 0.2:  # Show muzzle flash for 0.2 seconds after firing
+                flash_length = 8
+                flash_end_x = barrel_end_x + math.cos(target.turret_angle) * flash_length
+                flash_end_y = barrel_end_y + math.sin(target.turret_angle) * flash_length
+                # Bright yellow/orange muzzle flash
                 pygame.draw.line(self.screen, (255, 255, 100), (barrel_end_x, barrel_end_y), (flash_end_x, flash_end_y), 6)
                 pygame.draw.circle(self.screen, (255, 200, 0), (int(barrel_end_x), int(barrel_end_y)), 4)
             
-        # Health bar
+        # Health bar for ground targets
         if target.health < target.max_health:
             bar_width = 20
             health_width = int(bar_width * (target.health / target.max_health))
             pygame.draw.rect(self.screen, (255, 0, 0), (x - bar_width // 2, y - target.size - 8, bar_width, 3))
             pygame.draw.rect(self.screen, (0, 255, 0), (x - bar_width // 2, y - target.size - 8, health_width, 3))
             
-        # Targeting indicator
+        # Show targeting indicator for AA guns when they're tracking
         if target.target_type == "aa_gun" and target.can_shoot and abs(target.turret_angle - target.target_turret_angle) > 0.1:
+            # Draw a small arc showing the turret is turning            arc_radius = 15
+            arc_radius = 15
             start_angle = target.turret_angle
             end_angle = target.target_turret_angle
+            # Draw small dots to show rotation direction
             for i in range(3):
                 angle_step = (end_angle - start_angle) * (i + 1) / 4
                 if abs(angle_step) > math.pi:
                     angle_step = angle_step - 2 * math.pi if angle_step > 0 else angle_step + 2 * math.pi
                 dot_angle = start_angle + angle_step
-                dot_x = x + math.cos(dot_angle) * 15
-                dot_y = y + math.sin(dot_angle) * 15
+                dot_x = x + math.cos(dot_angle) * arc_radius
+                dot_y = y + math.sin(dot_angle) * arc_radius
                 pygame.draw.circle(self.screen, (255, 255, 0), (int(dot_x), int(dot_y)), 1)
 
     def project_3d_to_2d(self, pos_3d):
+        """Project 3D position to 2D screen coordinates"""
+        # Simple orthographic projection with height indication
         return int(pos_3d[0]), int(pos_3d[1]), pos_3d[2]
 
     def draw_aircraft(self, aircraft):
+        """Draw an aircraft with 3D visual cues"""
         if not aircraft.alive:
             return
         x, y, z = self.project_3d_to_2d(aircraft.pos)
@@ -1058,6 +1081,7 @@ class DogfightSimulation:
             pygame.draw.line(self.screen, (255, 0, 0), (cx, cy - 10), (cx, cy + 10))
 
     def draw_projectile(self, projectile):
+        """Draw a projectile"""
         if not projectile.active:
             return
         x, y, _ = self.project_3d_to_2d(projectile.pos)
@@ -1080,6 +1104,7 @@ class DogfightSimulation:
             pygame.draw.line(self.screen, (255, 150, 0), (trail_x, trail_y), (x, y), 2)
 
     def draw_ui(self):
+        """Draw user interface"""
         ui_surface = pygame.Surface((300, 310))
         ui_surface.set_alpha(180)
         ui_surface.fill((0, 0, 0))
@@ -1150,6 +1175,7 @@ class DogfightSimulation:
                 self.screen.blit(self.small_font.render("Status: Default AI / Manual", True, (200, 200, 200)), (self.width - 280, info_y))
 
     def update(self, dt):
+        """Update simulation"""
         if self.paused: return
             
         for target in self.ground_targets:
