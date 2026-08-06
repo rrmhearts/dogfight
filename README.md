@@ -1,6 +1,7 @@
 # 3D Dogfight Simulation
 
 A real-time 3D aerial combat simulation with advanced AI maneuvers, ground targets, and tactical mission planning. Built with Python and Pygame, featuring an overhead tactical view of fully 3D flight physics.
+
 ![Dogfight Simulation](https://img.shields.io/badge/Python-3.7+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Status](https://img.shields.io/badge/Status-Active-brightgreen.svg)
