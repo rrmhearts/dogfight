@@ -33,8 +33,32 @@ HOST_IP = "127.0.0.1"
 # entities maps ID -> {data, address, health}
 entities = {}
 players_config = {
-    "P1": {"color": (0, 255, 0), "radar_active": 0, "target": None, "keys": {"fwd": pygame.K_w, "rev": pygame.K_s, "left": pygame.K_a, "right": pygame.K_d, "fire": pygame.K_SPACE, "radar": pygame.K_r}},
-    "P2": {"color": (0, 200, 255), "radar_active": 0, "target": None, "keys": {"fwd": pygame.K_UP, "rev": pygame.K_DOWN, "left": pygame.K_LEFT, "right": pygame.K_RIGHT, "fire": pygame.K_RETURN, "radar": pygame.K_p}}
+    "P1": {
+        "color": (0, 255, 0), 
+        "radar_active": 0, 
+        "target": None, 
+        "keys": {
+            "fwd": pygame.K_w, 
+            "rev": pygame.K_s, 
+            "left": pygame.K_a, 
+            "right": pygame.K_d, 
+            "fire": pygame.K_SPACE, 
+            "radar": pygame.K_r
+        }
+    },
+    "P2": {
+        "color": (0, 200, 255), 
+        "radar_active": 0, 
+        "target": None, 
+        "keys": {
+            "fwd": pygame.K_UP, 
+            "rev": pygame.K_DOWN, 
+            "left": pygame.K_LEFT, 
+            "right": pygame.K_RIGHT, 
+            "fire": pygame.K_RETURN, 
+            "radar": pygame.K_p
+        }
+    }
 }
 
 # ==========================================
